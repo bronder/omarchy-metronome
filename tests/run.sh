@@ -94,13 +94,29 @@ EOF
 check "stdout is frame-aligned PCM" $?
 
 # --- 3. clean teardown on a closed pipe ------------------------------------
-"$bin/metronome" 120 4 1/4 2>"$tmp/pipe_err" >/dev/null &  # warm stderr only
-metpid=$!
-kill $metpid 2>/dev/null; wait $metpid 2>/dev/null
-
 head -c 100000 /dev/null | "$bin/metronome" 120 4 1/4 2>"$tmp/trace" | head -c 0
 grep -q "Traceback" "$tmp/trace"
 check "no traceback on broken pipe" $([ $? -ne 0 ]; echo $?)
+
+# --- 4. TERM to the pipeline leader tears down the group -------------------
+# Regression: bash defers trapped signals while blocked on a foreground
+# pipeline; since the metronome never exits, the TERM trap must be reached
+# via a background pipeline + interruptible `wait` — otherwise the audio
+# tree survives stop/close forever.
+setsid "$bin/metro-pipeline" 240 4 1/4 >/dev/null 2>&1 &
+sleep 1
+leader=$(ps -eo pid,cmd | awk -v s="$bin/metro-pipeline" '$2=="bash" && $3==s {print $1; exit}')
+if [ -n "$leader" ]; then
+  kill -TERM "$leader"
+  dead=1
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    sleep 0.3
+    ps -p "$leader" >/dev/null 2>&1 || { dead=0; break; }
+  done
+  check "TERM to leader kills the whole group" $dead
+else
+  check "TERM to leader kills the whole group" 1
+fi
 
 echo
 if [ "$fails" -eq 0 ]; then echo "all metronome tests passed"; exit 0; fi

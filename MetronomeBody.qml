@@ -69,6 +69,8 @@ Item {
 
   implicitHeight: column.implicitHeight
 
+  Component.onDestruction: if (metroProc.running) stopMetro()
+
   function applyPayload(payload) {
     if (!payload || typeof payload !== "object") return
     if (payload.metro === false) root.metroActive = false
@@ -83,9 +85,18 @@ Item {
     if (root.metroActive) restartMetro()
   }
 
-  onActiveChanged: if (active) {
-    if (root.metroActive) restartMetro()
-    root.currentBeat = 0
+  onActiveChanged: {
+    if (active) {
+      if (root.metroActive) restartMetro()
+      root.currentBeat = 0
+    } else {
+      stopMetro()
+    }
+  }
+
+  onMetroActiveChanged: {
+    if (root.active && root.metroActive) restartMetro()
+    else stopMetro()
   }
 
   // bin/metronome schedules the click track and reports beats on stderr;
@@ -97,12 +108,19 @@ Item {
     onTriggered: restartMetro()
   }
 
-  function restartMetro() {
-    if (!root.metroActive) return
-    // An imperative running=true would clobber the declarative binding, so
-    // the overlay-close stop below would stop working; re-attach it instead.
+  // Quickshell's Process.running=false does not reliably stop a running
+  // child on this build, so stops are forced with an explicit SIGTERM to
+  // the pipeline leader; its trap tears down the whole process group.
+  function stopMetro() {
+    var pid = Number(metroProc.processId)
+    if (pid > 0) metroProc.signal(15) // SIGTERM
     metroProc.running = false
-    metroProc.running = Qt.binding(function() { return root.active && root.metroActive })
+  }
+
+  function restartMetro() {
+    if (!root.active || !root.metroActive) return
+    stopMetro()
+    metroProc.running = true
   }
 
   // Tap tempo: average the last few tap intervals; a pause over 2s starts
@@ -150,7 +168,6 @@ Item {
   // always tears down the whole tree.
   Process {
     id: metroProc
-    running: root.active && root.metroActive
     command: ["setsid", root.metroPipeline,
               String(clampInt(root.bpm, 20, 300, 100)),
               String(clampInt(root.beatsPerBar, 1, 12, 4)),

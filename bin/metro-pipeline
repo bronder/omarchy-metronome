@@ -22,5 +22,11 @@ cleanup() {
 }
 trap cleanup TERM INT EXIT
 
+# The pipeline must run in the background with a `wait`: bash defers
+# trapped signals while blocked on a foreground pipeline, and since the
+# metronome never exits, a TERM sent to this script would never run the
+# trap (and never tear the group down). `wait` is interruptible, so the
+# TERM trap fires immediately.
 exec "${0%/*}/metronome" "$bpm" "$beats" "$sub" \
-  | pw-play --raw --format=s16 --rate=44100 --channels=2 --latency=50ms -
+  | pw-play --raw --format=s16 --rate=44100 --channels=2 --latency=50ms - &
+wait
