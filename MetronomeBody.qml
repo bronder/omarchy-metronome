@@ -19,6 +19,10 @@ Item {
 
   property bool active: false
 
+  // Tighter layout for the bar popup, whose card is height-capped; the
+  // fullscreen overlay uses the roomier default.
+  property bool compact: false
+
   property color foreground: Color.menu.text
   property color border: Color.menu.border
   property string fontFamily: Style.font.menuFamily
@@ -241,7 +245,7 @@ Item {
   Column {
     id: column
     width: parent.width
-    spacing: Style.space(14)
+    spacing: Style.space(root.compact ? 10 : 14)
 
     // ---------- Hero ----------
     PanelHero {
@@ -272,7 +276,7 @@ Item {
 
       Item {
         id: dial
-        width: Style.space(230)
+        width: Style.space(root.compact ? 185 : 230)
         height: width
         anchors.verticalCenter: parent.verticalCenter
 
@@ -392,7 +396,7 @@ Item {
               text: root.bpm
               color: "#ffffff"
               font.family: root.fontFamily
-              font.pixelSize: Math.max(36, Style.font.title + 16)
+              font.pixelSize: Math.max(28, Style.font.title + (root.compact ? 8 : 16))
               font.bold: true
               textFormat: Text.PlainText
             }
@@ -506,7 +510,7 @@ Item {
           id: subTile
           required property var modelData
           width: (parent.width - Style.space(12)) / 3
-          height: Style.space(52)
+          height: Style.space(root.compact ? 46 : 52)
 
           Rectangle {
             anchors.fill: parent

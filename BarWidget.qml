@@ -57,6 +57,7 @@ Panel {
         id: body
         width: flick.width
         height: implicitHeight
+        compact: true
         active: root.opened
       }
     }
