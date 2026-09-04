@@ -1,10 +1,12 @@
 import QtQuick
+import QtQuick.Controls
 import Quickshell
 import qs.Ui
 import qs.Commons
 
 // Bar widget: a ♫ button that opens the metronome in a popup anchored
-// under this icon, the way the first-party panels do.
+// under this icon, the way the first-party panels do. The body is taller
+// than the space above the bar on short screens, so it scrolls.
 Panel {
   id: root
   moduleName: "bronder.metronome"
@@ -28,12 +30,20 @@ Panel {
     bar: root.bar
     open: root.opened
     contentWidth: panel.fittedContentWidth(Style.space(560))
-    contentHeight: panel.fittedContentHeight(body.implicitHeight)
+    contentHeight: panel.fittedContentHeight(body.implicitHeight, Style.space(720))
 
-    MetronomeBody {
-      id: body
+    ScrollView {
+      id: scroll
       anchors.fill: parent
-      active: root.opened
+      clip: true
+      ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+      ScrollBar.vertical.policy: body.implicitHeight > height ? ScrollBar.AsNeeded : ScrollBar.AlwaysOff
+
+      MetronomeBody {
+        id: body
+        width: scroll.availableWidth
+        active: root.opened
+      }
     }
   }
 }
