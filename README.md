@@ -2,6 +2,8 @@
 
 An [Omarchy](https://omarchy.org/) shell plugin: a metronome.
 
+![Metronome preview](preview.png)
+
 ▶ starts it, dots show the beat (green accent on the downbeat), steppers and
 a slider set the tempo (20–300 bpm), a TAP button taps it in, tiles pick the
 subdivision (1/4, 1/8, 1/8t, swing, 1/16, 1/16t), and a stepper row sets the
