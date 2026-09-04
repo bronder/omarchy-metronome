@@ -1,0 +1,115 @@
+#!/usr/bin/env python3
+"""Metronome click-track generator.
+
+Writes a continuous s16le stereo 44.1 kHz click track to stdout (pipe it
+into `pw-play --raw -`), and emits one JSON line per click on stderr so the
+UI can light up beat dots in time:
+
+    {"beat": 1, "beats": 4, "sub": 0, "subs": 2}
+
+Subdivisions are weighted: each entry is the fraction of the beat that the
+click at that position owns. Equal weights give straight divisions (1/8,
+1/16, triplets); the 2:1 weighting of "swing" gives the long-short shuffle.
+
+Usage: metronome <bpm> <beats-per-bar> <subdivision>
+       subdivision: 1/4 | 1/8 | 1/8t | 1/16 | 1/16t | swing
+"""
+
+import json
+import math
+import sys
+import time
+
+RATE = 44100
+
+SUBDIVISIONS = {
+    "1/4":   [1.0],
+    "1/8":   [0.5, 0.5],
+    "1/8t":  [1 / 3, 1 / 3, 1 / 3],
+    "1/16":  [0.25, 0.25, 0.25, 0.25],
+    "1/16t": [1 / 6] * 6,
+    "swing": [2 / 3, 1 / 3],
+}
+
+# (frequency Hz, amplitude, length seconds) per click kind.
+ACCENT = (1500.0, 0.55, 0.030)
+BEAT = (1000.0, 0.38, 0.030)
+TICK = (2200.0, 0.16, 0.018)
+
+
+def render(freq: float, amp: float, length: float) -> bytes:
+    # A short sine burst with a fast exponential decay: a sharp tick.
+    n = int(RATE * length)
+    out = bytearray()
+    for i in range(n):
+        env = amp * 32767.0 * math.exp(-i / (RATE * (length / 5)))
+        sample = int(env * math.sin(2 * math.pi * freq * i / RATE))
+        out += sample.to_bytes(2, "little", signed=True) * 2  # stereo
+    return bytes(out)
+
+
+def main() -> None:
+    if len(sys.argv) < 3:
+        print("usage: metronome <bpm> <beats-per-bar> [subdivision]", file=sys.stderr)
+        sys.exit(2)
+
+    bpm = max(20, min(300, int(sys.argv[1])))
+    beats = max(1, min(12, int(sys.argv[2])))
+    weights = SUBDIVISIONS.get(sys.argv[3] if len(sys.argv) > 3 else "1/4", [1.0])
+
+    spb = 60.0 / bpm                    # seconds per beat
+    frame = b"\x00\x00\x00\x00"
+
+    sounds = {
+        "accent": render(*ACCENT),
+        "beat": render(*BEAT),
+        "tick": render(*TICK),
+    }
+
+    out = sys.stdout.buffer
+    beat = 0
+    start = time.monotonic()
+    try:
+        while True:
+            beat += 1
+            is_downbeat = (beat - 1) % beats == 0
+
+            # Clicks within this beat, each owning weights[i] of it.
+            offset = 0.0
+            for i, w in enumerate(weights):
+                if i == 0:
+                    sound = sounds["accent"] if is_downbeat else sounds["beat"]
+                else:
+                    sound = sounds["tick"]
+                out.write(sound)
+                out.flush()
+                print(json.dumps({
+                    "beat": (beat - 1) % beats + 1,
+                    "beats": beats,
+                    "sub": i,
+                    "subs": len(weights),
+                }), file=sys.stderr, flush=True)
+
+                # Fill this click's share of the beat with silence, paced
+                # to absolute wall-clock deadlines so drift does not build.
+                share = w * spb
+                silence = max(0, int(RATE * share) - len(sound) // 4)
+                chunk = max(1, RATE // 20)
+                written = 0
+                next_deadline = start + (beat - 1) * spb + offset + share
+                while written < silence:
+                    n = min(chunk, silence - written)
+                    out.write(frame * n)
+                    out.flush()
+                    written += n
+                    now = time.monotonic()
+                    target = next_deadline - (silence - written) / RATE
+                    if target > now:
+                        time.sleep(target - now)
+                offset += share
+    except BrokenPipeError:
+        pass
+
+
+if __name__ == "__main__":
+    main()

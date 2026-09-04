@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "id": "bronder.metronome",
+  "name": "Metronome",
+  "version": "0.1.0",
+  "author": "bronder",
+  "license": "MIT",
+  "description": "Metronome with beat dots, tap tempo, subdivisions (straight, triplet, swing), and 1-12 beats per bar.",
+  "kinds": [
+    "overlay",
+    "bar-widget"
+  ],
+  "keepLoaded": true,
+  "entryPoints": {
+    "overlay": "Metronome.qml",
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Metronome",
+    "description": "Summon the metronome overlay.",
+    "category": "Audio",
+    "allowMultiple": false,
+    "defaultSection": "right"
+  }
+}
