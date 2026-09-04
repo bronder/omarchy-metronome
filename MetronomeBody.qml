@@ -23,10 +23,10 @@ Item {
   // fullscreen overlay uses the roomier default.
   property bool compact: false
 
-  // When true, a small 📌 button floats in the top-right corner and emits
-  // pinRequested(); the popup host uses it to keep the existing window
-  // open in pinned mode. `pinned` reflects host state and swaps the icon
-  // to 📍 so the affordance reads as "unpin".
+  // When true, a small pin button docks at the hero's trailing edge and
+  // emits pinRequested(); the popup host uses it to keep the existing
+  // window open in pinned mode. `pinned` reflects host state and tints
+  // the icon with the accent color so the affordance reads as "unpin".
   property bool pinnable: false
   property bool pinned: false
   signal pinRequested()
@@ -79,17 +79,21 @@ Item {
 
   Component.onDestruction: if (metroProc.running) stopMetro()
 
-  // Pin control, floating in the panel's top-right corner.
-  PanelActionButton {
-    visible: root.pinnable
-    iconText: root.pinned ? "📍" : "📌"
-    foreground: root.foreground
-    size: Style.space(26)
-    anchors.top: parent.top
-    anchors.right: parent.right
-    anchors.topMargin: -Style.space(2)
-    anchors.rightMargin: -Style.space(2)
-    onClicked: root.pinRequested()
+  // Pin control, docked in the hero's trailing slot (PanelHero reserves
+  // the space via trailingInset, so the PLAYING pill can never slide
+  // underneath it). Material Symbols glyph so it follows the theme; the
+  // accent color marks the pinned state.
+  Component {
+    id: pinControl
+    PanelActionButton {
+      iconText: "push_pin"
+      fontFamily: "Material Symbols Rounded"
+      foreground: root.pinned ? root.accent : root.foreground
+      opacity: root.pinned ? 1 : 0.75
+      tooltipText: root.pinned ? "Unpin" : "Keep open"
+      size: Style.space(26)
+      onClicked: root.pinRequested()
+    }
   }
 
   function applyPayload(payload) {
@@ -129,10 +133,29 @@ Item {
     onTriggered: restartMetro()
   }
 
+  // Tap runs settle slower than steppers/sliders: wait for a pause in
+  // tapping before adopting the tempo, so the pipeline never restarts
+  // mid-run and interrupt the bar being tapped against.
+  Timer {
+    id: tapHold
+    interval: 900
+    onTriggered: restartMetro()
+  }
+
+  // Settle gap between tearing down the old pipeline and starting the new
+  // one: the old pw-play needs a moment to release the sink after SIGTERM,
+  // otherwise rapid restarts briefly overlap two click tracks.
+  Timer {
+    id: metroStartHold
+    interval: 120
+    onTriggered: doStartMetro()
+  }
+
   // Quickshell's Process.running=false does not reliably stop a running
   // child on this build, so stops are forced with an explicit SIGTERM to
   // the pipeline leader; its trap tears down the whole process group.
   function stopMetro() {
+    metroStartHold.stop() // cancel a pending delayed start, if any
     var pid = Number(metroProc.processId)
     if (pid > 0) metroProc.signal(15) // SIGTERM
     metroProc.running = false
@@ -141,6 +164,11 @@ Item {
   function restartMetro() {
     if (!root.active || !root.metroActive) return
     stopMetro()
+    metroStartHold.restart()
+  }
+
+  function doStartMetro() {
+    if (!root.active || !root.metroActive) return
     metroProc.running = true
   }
 
@@ -162,7 +190,7 @@ Item {
     for (var i = 0; i < recent.length; i++) avg += recent[i]
     avg /= recent.length
     root.bpm = Math.min(300, Math.max(20, Math.round(60000 / avg)))
-    bpmHold.restart()
+    tapHold.restart()
   }
 
   function stepBpm(d) {
@@ -292,6 +320,7 @@ Item {
       fontFamily: root.fontFamily
       title: "Metronome"
       detail: root.metroActive ? "PLAYING" : ""
+      trailingControl: root.pinnable ? pinControl : null
       meta: root.bpm + " BPM · " + root.beatsPerBar + "/4 · " + root.subdivision
       iconComponent: Component {
         Text {

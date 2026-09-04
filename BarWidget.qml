@@ -9,7 +9,7 @@ import qs.Commons
 // than the space above the bar, so it flicks/scrolls inside the card
 // (same Flickable pattern the tray menu and agents panel use).
 //
-// The 📌 in the popup toggles "pinned" locally — the popup stays put,
+// The pin icon in the popup toggles "pinned" locally — the popup stays put,
 // click-outside dismissal is disabled (PopupCard.triggerMode = "hover"),
 // and the bar icon / pin button tear it down. The overlay entry still
 // owns its own pinned corner window for external IPC (`omarchy-shell

@@ -25,13 +25,13 @@ trap 'rm -rf "$tmp"' EXIT
 # metro-pipeline (all QML paths go through it). Here: non-numeric args must
 # fail, and out-of-range args must be clamped, never crash. A 124 exit is a
 # timeout — the generator ran, which counts as a failure here too.
-timeout 2 "$bin/metronome" abc 4 1/4 >/dev/null 2>&1
-rc=$?; [ $rc -ne 0 ] && [ $rc -ne 124 ]
-check "metronome rejects non-numeric bpm" $?
+timeout 2 "$bin/metronome" abc 4 1/4 >/dev/null 2>"$tmp/badbpm"
+rc=$?; [ $rc -eq 2 ] && ! grep -q "Traceback" "$tmp/badbpm"
+check "metronome rejects non-numeric bpm with usage (exit 2, no traceback)" $?
 
-timeout 2 "$bin/metronome" 120 def 1/4 >/dev/null 2>&1
-rc=$?; [ $rc -ne 0 ] && [ $rc -ne 124 ]
-check "metronome rejects non-numeric beats" $?
+timeout 2 "$bin/metronome" 120 def 1/4 >/dev/null 2>"$tmp/badbeats"
+rc=$?; [ $rc -eq 2 ] && ! grep -q "Traceback" "$tmp/badbeats"
+check "metronome rejects non-numeric beats with usage (exit 2, no traceback)" $?
 
 timeout 2 "$bin/metronome" 120 >/dev/null 2>&1
 rc=$?; [ $rc -ne 0 ] && [ $rc -ne 124 ]

@@ -12,7 +12,7 @@ import qs.Ui
 // a small always-on-top metronome that keeps playing while you work. The
 // window lives at this plugin root because a PanelWindow nested inside the
 // bar widget's item tree maps but never renders on this Quickshell build.
-// The bar popup's 📌 is independent — it pins the popup itself — and that
+// The bar popup's pin icon is independent — it pins the popup itself — and that
 // popup yields to this overlay on summon (see BarWidget.qml), so only one
 // MetronomeBody, and therefore one audio pipeline, is ever active.
 Item {
@@ -82,15 +82,20 @@ Item {
     root.pendingPayload = payload
     var switchingScreen = false
     if (wanted) {
-      var match = null
-      var screens = Quickshell.screens || []
-      for (var i = 0; i < screens.length; i++)
-        if (screens[i].name === wanted) match = screens[i]
-      if (match && match !== root.targetScreen) {
-        root.targetScreen = match
-        switchingScreen = true
+      var match = root.findScreen(wanted)
+      if (match) {
+        if (match !== root.targetScreen) {
+          root.targetScreen = match
+          switchingScreen = true
+        }
+      } else if (!root.targetScreen) {
+        // Unknown screen name: fall back instead of hanging on null.
+        root.targetScreen = root.firstScreen()
       }
     } else {
+      // Open instantly on a synchronous fallback; the async
+      // focused-monitor probe below refines it when hyprctl/jq answer.
+      if (!root.targetScreen) root.targetScreen = root.firstScreen()
       screenProc.running = false
       screenProc.running = true
     }
@@ -148,6 +153,19 @@ Item {
     return Math.min(hi, Math.max(lo, v))
   }
 
+  // First known output, or null when the shell knows no screens (yet).
+  function firstScreen() {
+    var screens = Quickshell.screens || []
+    return screens.length > 0 ? screens[0] : null
+  }
+
+  function findScreen(name) {
+    var screens = Quickshell.screens || []
+    for (var i = 0; i < screens.length; i++)
+      if (screens[i].name === name || screens[i].displayName === name) return screens[i]
+    return null
+  }
+
   PanelWindow {
     id: pinnedWindow
     visible: root.pinned
@@ -202,12 +220,16 @@ Item {
     stdout: StdioCollector {
       onStreamFinished: {
         var name = text.trim()
-        if (name.length === 0 || name.length > 64 || !/^[A-Za-z0-9._-]+$/.test(name))
-          return
-        var screens = Quickshell.screens || []
-        for (var i = 0; i < screens.length; i++)
-          if (screens[i].name === name || screens[i].displayName === name)
-            root.targetScreen = screens[i]
+        if (name.length > 0 && name.length <= 64 && /^[A-Za-z0-9._-]+$/.test(name)) {
+          var match = root.findScreen(name)
+          if (match) {
+            root.targetScreen = match
+            return
+          }
+        }
+        // Probe failed or answered unknown: keep a good screen, else fall
+        // back so the overlay never hangs on a null target.
+        if (!root.targetScreen) root.targetScreen = root.firstScreen()
       }
     }
   }

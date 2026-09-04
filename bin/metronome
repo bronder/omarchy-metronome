@@ -53,8 +53,12 @@ def main() -> None:
         print("usage: metronome <bpm> <beats-per-bar> [subdivision]", file=sys.stderr)
         sys.exit(2)
 
-    bpm = max(20, min(300, int(sys.argv[1])))
-    beats = max(1, min(12, int(sys.argv[2])))
+    try:
+        bpm = max(20, min(300, int(sys.argv[1])))
+        beats = max(1, min(12, int(sys.argv[2])))
+    except ValueError:
+        print("usage: metronome <bpm> <beats-per-bar> [subdivision]", file=sys.stderr)
+        sys.exit(2)
     weights = SUBDIVISIONS.get(sys.argv[3] if len(sys.argv) > 3 else "1/4", [1.0])
 
     spb = 60.0 / bpm                    # seconds per beat
