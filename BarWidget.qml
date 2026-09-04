@@ -8,6 +8,17 @@ import qs.Commons
 // under this icon, the way the first-party panels do. The body is taller
 // than the space above the bar, so it flicks/scrolls inside the card
 // (same Flickable pattern the tray menu and agents panel use).
+//
+// The 📌 in the popup toggles "pinned" locally — the popup stays put,
+// click-outside dismissal is disabled (PopupCard.triggerMode = "hover"),
+// and the bar icon / pin button tear it down. The overlay entry still
+// owns its own pinned corner window for external IPC (`omarchy-shell
+// bronder.metronome pin`); the in-popup pin does not go through it.
+//
+// The popup and the overlay each run their own MetronomeBody, so both
+// active at once would mean two audio pipelines. The shell's openPanelIds
+// marks the overlay summoned, and this widget yields to it: the popup
+// folds away (and stays closed while the overlay is up).
 Panel {
   id: root
   moduleName: "bronder.metronome"
@@ -15,6 +26,23 @@ Panel {
 
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
+
+  // When true, the popup stays open and ignores outside clicks.
+  property bool pinned: false
+
+  // The Bar carries the shell object; openPanelIds[moduleName] is true for
+  // exactly as long as the overlay is summoned (set in shell summon(),
+  // cleared in hide()).
+  readonly property var shellRef: root.bar ? root.bar.shell : null
+  readonly property bool overlaySummoned: !!shellRef && !!shellRef.openPanelIds
+    && shellRef.openPanelIds[moduleName] === true
+
+  onOverlaySummonedChanged: {
+    if (overlaySummoned && (root.opened || root.pinned)) {
+      root.pinned = false
+      root.close()
+    }
+  }
 
   BarIconButton {
     id: button
@@ -30,6 +58,9 @@ Panel {
     owner: root
     bar: root.bar
     open: root.opened
+    // Pinned popups must not auto-dismiss on outside click; the bar icon
+    // or pin button is the only way out.
+    triggerMode: root.pinned ? "hover" : "click"
     contentWidth: panel.fittedContentWidth(Style.space(560))
 
     // The host bar's window spans nearly the whole monitor, so the card's
@@ -58,8 +89,46 @@ Panel {
         width: flick.width
         height: implicitHeight
         compact: true
-        active: root.opened
+        pinnable: true
+        pinned: root.pinned
+        active: root.opened || root.pinned
+
+        onPinRequested: root.togglePinned()
       }
     }
+  }
+
+  // The overlay covers the bar, so the icon can't be clicked while it is
+  // up — but the panel IPC still could, opening a second playing body.
+  function open() {
+    if (root.overlaySummoned) return
+    root.controller.show()
+  }
+
+  function toggle() {
+    if (root.pinned) {
+      root.unpin()
+    } else if (root.opened) {
+      root.close()
+    } else {
+      root.open()
+    }
+  }
+
+  function togglePinned() {
+    if (root.pinned) root.unpin()
+    else root.pin()
+  }
+
+  function pin() {
+    if (root.pinned) return
+    root.pinned = true
+    if (!root.opened) root.open()
+  }
+
+  function unpin() {
+    if (!root.pinned) return
+    root.pinned = false
+    root.close()
   }
 }

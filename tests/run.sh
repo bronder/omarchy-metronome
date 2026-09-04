@@ -23,14 +23,18 @@ trap 'rm -rf "$tmp"' EXIT
 # The generator itself clamps out-of-range bpm/beats and falls back to 1/4
 # for unknown subdivisions; the strict rejection contract lives in
 # metro-pipeline (all QML paths go through it). Here: non-numeric args must
-# fail, and out-of-range args must be clamped, never crash.
+# fail, and out-of-range args must be clamped, never crash. A 124 exit is a
+# timeout — the generator ran, which counts as a failure here too.
 timeout 2 "$bin/metronome" abc 4 1/4 >/dev/null 2>&1
-check "metronome rejects non-numeric bpm" $([ $? -ne 0 ] && [ $? -ne 124 ]; echo $?)
+rc=$?; [ $rc -ne 0 ] && [ $rc -ne 124 ]
+check "metronome rejects non-numeric bpm" $?
+
 timeout 2 "$bin/metronome" 120 def 1/4 >/dev/null 2>&1
-check "metronome rejects non-numeric beats" $([ $? -ne 0 ] && [ $? -ne 124 ]; echo $?)
+rc=$?; [ $rc -ne 0 ] && [ $rc -ne 124 ]
+check "metronome rejects non-numeric beats" $?
 
 timeout 2 "$bin/metronome" 120 >/dev/null 2>&1
-[ $? -ne 0 ]
+rc=$?; [ $rc -ne 0 ] && [ $rc -ne 124 ]
 check "metronome rejects missing args" $?
 
 "$bin/metro-pipeline" 400 4 1/4 >/dev/null 2>&1

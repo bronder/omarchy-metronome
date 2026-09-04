@@ -23,6 +23,14 @@ Item {
   // fullscreen overlay uses the roomier default.
   property bool compact: false
 
+  // When true, a small 📌 button floats in the top-right corner and emits
+  // pinRequested(); the popup host uses it to keep the existing window
+  // open in pinned mode. `pinned` reflects host state and swaps the icon
+  // to 📍 so the affordance reads as "unpin".
+  property bool pinnable: false
+  property bool pinned: false
+  signal pinRequested()
+
   property color foreground: Color.menu.text
   property color border: Color.menu.border
   property string fontFamily: Style.font.menuFamily
@@ -70,6 +78,19 @@ Item {
   implicitHeight: column.implicitHeight
 
   Component.onDestruction: if (metroProc.running) stopMetro()
+
+  // Pin control, floating in the panel's top-right corner.
+  PanelActionButton {
+    visible: root.pinnable
+    iconText: root.pinned ? "📍" : "📌"
+    foreground: root.foreground
+    size: Style.space(26)
+    anchors.top: parent.top
+    anchors.right: parent.right
+    anchors.topMargin: -Style.space(2)
+    anchors.rightMargin: -Style.space(2)
+    onClicked: root.pinRequested()
+  }
 
   function applyPayload(payload) {
     if (!payload || typeof payload !== "object") return
