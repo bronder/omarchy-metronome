@@ -272,25 +272,44 @@ Item {
     Timer { id: msRepeat; interval: 80; repeat: true; onTriggered: ms.action() }
   }
 
-  // Large thin chevron beside the dial; auto-repeats while held.
+  // Large thin chevron beside the dial; auto-repeats while held. A small
+  // caption above names the step so each tier reads as −10 … +10.
   component ChevronStep: Item {
     id: cs
     property string glyph: "‹"
+    property string caption: ""
     property var action: function() {}
-    width: csText.implicitWidth
-    height: csText.implicitHeight
+    width: stepCol.implicitWidth
+    height: stepCol.implicitHeight
 
-    Text {
-      id: csText
+    Column {
+      id: stepCol
       anchors.centerIn: parent
-      text: cs.glyph
-      color: csArea.pressed ? "#ffffff" : root.accent
-      font.family: root.fontFamily
-      font.pixelSize: Math.max(30, Style.font.title + 10)
-      font.bold: true
-      textFormat: Text.PlainText
+      spacing: 2
 
-      Behavior on color { ColorAnimation { duration: 80 } }
+      Text {
+        id: capText
+        anchors.horizontalCenter: parent.horizontalCenter
+        text: cs.caption
+        color: root.foreground
+        opacity: 0.55
+        font.family: root.fontFamily
+        font.pixelSize: Math.max(9, Style.font.body - 4)
+        textFormat: Text.PlainText
+      }
+
+      Text {
+        id: csText
+        anchors.horizontalCenter: parent.horizontalCenter
+        text: cs.glyph
+        color: csArea.pressed ? "#ffffff" : root.accent
+        font.family: root.fontFamily
+        font.pixelSize: Math.max(30, Style.font.title + 10)
+        font.bold: true
+        textFormat: Text.PlainText
+
+        Behavior on color { ColorAnimation { duration: 80 } }
+      }
     }
 
     MouseArea {
@@ -334,12 +353,16 @@ Item {
 
     PanelSeparator { foreground: root.foreground }
 
-    // ---------- Dial: ‹ ◐ › ----------
+    // ---------- Dial: ‹‹‹ ‹‹ ‹ ◐ › ›› ››› ----------
+    // The one tempo control: more chevrons, bigger the step (±1, ±5,
+    // ±10 outward from the dial), all hold-to-repeat via stepBpm.
     Row {
       anchors.horizontalCenter: parent.horizontalCenter
       spacing: Style.space(10)
 
-      ChevronStep { glyph: "‹"; anchors.verticalCenter: parent.verticalCenter; action: function() { root.stepBpm(-1) } }
+      ChevronStep { glyph: "‹‹‹"; caption: "−10"; anchors.verticalCenter: parent.verticalCenter; action: function() { root.stepBpm(-10) } }
+      ChevronStep { glyph: "‹‹"; caption: "−5"; anchors.verticalCenter: parent.verticalCenter; action: function() { root.stepBpm(-5) } }
+      ChevronStep { glyph: "‹"; caption: "−1"; anchors.verticalCenter: parent.verticalCenter; action: function() { root.stepBpm(-1) } }
 
       Item {
         id: dial
@@ -490,7 +513,9 @@ Item {
         }
       }
 
-      ChevronStep { glyph: "›"; anchors.verticalCenter: parent.verticalCenter; action: function() { root.stepBpm(1) } }
+      ChevronStep { glyph: "›"; caption: "+1"; anchors.verticalCenter: parent.verticalCenter; action: function() { root.stepBpm(1) } }
+      ChevronStep { glyph: "››"; caption: "+5"; anchors.verticalCenter: parent.verticalCenter; action: function() { root.stepBpm(5) } }
+      ChevronStep { glyph: "›››"; caption: "+10"; anchors.verticalCenter: parent.verticalCenter; action: function() { root.stepBpm(10) } }
     }
 
     // Beat dots — the current beat lights up, green-teal accent on the
@@ -556,8 +581,10 @@ Item {
       onReleased: function(v) { bpmHold.restart() }
     }
 
-    // Subdivisions: a uniform 3-column grid, straight → triplet → swing,
-    // each tile showing the rhythm in note glyphs under its label.
+    // Subdivisions: a compact 3-column grid of single-line chips — label
+    // beside its note glyphs — at roughly half the height of the old
+    // stacked tiles. Triplet feel reads off the beamed notes (♪♪♪, ♬♬♬)
+    // and the "t" labels, so no second line is needed.
     Grid {
       width: parent.width
       columns: 3
@@ -576,66 +603,46 @@ Item {
         Item {
           id: subTile
           required property var modelData
+          readonly property bool selected: root.subdivision === subTile.modelData.label
           width: (parent.width - Style.space(12)) / 3
-          height: Style.space(root.compact ? 46 : 52)
+          // Size to the single-line content, not a magic number, so the
+          // chips fit on any font or theme without overflowing.
+          height: subRow.implicitHeight + Style.space(10)
 
           Rectangle {
             anchors.fill: parent
             radius: root.cornerRadius
-            color: root.subdivision === subTile.modelData.label
+            color: subTile.selected
               ? Qt.rgba(0.30, 0.73, 0.82, 0.22)
               : (tileMa.pressed ? Qt.rgba(1,1,1,0.15) : Qt.rgba(1,1,1,0.05))
-            border.color: root.subdivision === subTile.modelData.label ? root.accent : root.border
+            border.color: subTile.selected ? root.accent : root.border
             border.width: 1
             Behavior on color { ColorAnimation { duration: 100 } }
           }
 
-          Column {
+          Row {
+            id: subRow
             anchors.centerIn: parent
-            spacing: 2
+            spacing: Style.space(4)
 
             Text {
-              anchors.horizontalCenter: parent.horizontalCenter
+              anchors.verticalCenter: parent.verticalCenter
               text: subTile.modelData.label
-              color: root.subdivision === subTile.modelData.label ? root.accent : root.foreground
-              opacity: root.subdivision === subTile.modelData.label ? 1 : 0.75
+              color: subTile.selected ? root.accent : root.foreground
+              opacity: subTile.selected ? 1 : 0.75
               font.family: root.fontFamily
               font.pixelSize: Math.max(10, Style.font.body - 2)
               font.bold: true
               textFormat: Text.PlainText
             }
 
-            // Tuplet numeral (3, 6) riding above the beam, the way it is
-            // written on a stave; dotted notes spell out the swing feel.
             Text {
-              visible: subTile.modelData.tuplet !== ""
-              anchors.horizontalCenter: parent.horizontalCenter
-              text: subTile.modelData.tuplet
-              color: root.subdivision === subTile.modelData.label ? root.accent : root.foreground
-              opacity: root.subdivision === subTile.modelData.label ? 0.9 : 0.4
-              font.family: root.fontFamily
-              font.pixelSize: Math.max(9, Style.font.body - 4)
-              font.bold: true
-              textFormat: Text.PlainText
-            }
-
-            Rectangle {
-              visible: subTile.modelData.tuplet !== ""
-              anchors.horizontalCenter: parent.horizontalCenter
-              width: notesText.width
-              height: 1
-              color: root.subdivision === subTile.modelData.label ? root.accent : root.foreground
-              opacity: root.subdivision === subTile.modelData.label ? 0.7 : 0.3
-            }
-
-            Text {
-              id: notesText
-              anchors.horizontalCenter: parent.horizontalCenter
+              anchors.verticalCenter: parent.verticalCenter
               text: subTile.modelData.notes
-              color: root.subdivision === subTile.modelData.label ? root.accent : root.foreground
-              opacity: root.subdivision === subTile.modelData.label ? 0.95 : 0.45
+              color: subTile.selected ? root.accent : root.foreground
+              opacity: subTile.selected ? 0.95 : 0.45
               font.family: root.fontFamily
-              font.pixelSize: Math.max(16, Style.font.body + 6)
+              font.pixelSize: Math.max(14, Style.font.body + 2)
               textFormat: Text.PlainText
             }
           }
