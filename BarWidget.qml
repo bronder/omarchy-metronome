@@ -31,7 +31,15 @@ Panel {
     bar: root.bar
     open: root.opened
     contentWidth: panel.fittedContentWidth(Style.space(560))
-    contentHeight: panel.fittedContentHeight(body.implicitHeight)
+
+    // The host bar's window spans nearly the whole monitor, so the card's
+    // own available-height math (screen − bar) bottoms out at its 120-unit
+    // floor. Only trust it when it clears a sane minimum; otherwise cap the
+    // card ourselves and let the Flickable handle the rest.
+    readonly property real cardHeightCap: panel.availableCardHeight > Style.space(300)
+      ? panel.availableCardHeight
+      : Style.space(560)
+    contentHeight: Math.round(Math.min(body.implicitHeight + panel.verticalContentInset, cardHeightCap))
 
     Flickable {
       id: flick
