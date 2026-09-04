@@ -6,7 +6,8 @@ import qs.Commons
 
 // Bar widget: a ♫ button that opens the metronome in a popup anchored
 // under this icon, the way the first-party panels do. The body is taller
-// than the space above the bar on short screens, so it scrolls.
+// than the space above the bar, so it flicks/scrolls inside the card
+// (same Flickable pattern the tray menu and agents panel use).
 Panel {
   id: root
   moduleName: "bronder.metronome"
@@ -30,18 +31,24 @@ Panel {
     bar: root.bar
     open: root.opened
     contentWidth: panel.fittedContentWidth(Style.space(560))
-    contentHeight: panel.fittedContentHeight(body.implicitHeight, Style.space(720))
+    contentHeight: panel.fittedContentHeight(body.implicitHeight)
 
-    ScrollView {
-      id: scroll
+    Flickable {
+      id: flick
       anchors.fill: parent
+      contentWidth: width
+      contentHeight: body.height
       clip: true
-      ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
-      ScrollBar.vertical.policy: body.implicitHeight > height ? ScrollBar.AsNeeded : ScrollBar.AlwaysOff
+      boundsBehavior: Flickable.StopAtBounds
+      flickableDirection: Flickable.VerticalFlick
+      interactive: contentHeight > height
+
+      ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
 
       MetronomeBody {
         id: body
-        width: scroll.availableWidth
+        width: flick.width
+        height: implicitHeight
         active: root.opened
       }
     }
