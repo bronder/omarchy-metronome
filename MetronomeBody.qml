@@ -9,6 +9,11 @@ import qs.Ui
 // and the bar popup (BarWidget.qml). The host sets `active` to gate the
 // audio pipeline; everything else — state, process, controls — lives here
 // so the two entries behave identically wherever they are opened.
+//
+// Layout mirrors the classic circular metronome: a BPM dial with a tick
+// ring and numerals (40–208), a progress arc at the current tempo, a center
+// disc that starts/stops and shows the big number plus the tempo term
+// (Largo … Prestissimo), chevron steppers, and a TAP button.
 Item {
   id: root
 
@@ -18,6 +23,7 @@ Item {
   property color border: Color.menu.border
   property string fontFamily: Style.font.menuFamily
   readonly property int cornerRadius: Style.cornerRadius
+  readonly property color accent: "#4dbbd3"
 
   readonly property string metroPipeline: Qt.resolvedUrl("bin/metro-pipeline").toString().replace(/^file:\/\//, "")
   property bool metroActive: false
@@ -30,10 +36,31 @@ Item {
   // through these guards first; anything that fails is rejected, not coerced.
   readonly property var validSubdivisions: ["1/4", "1/8", "1/8t", "1/16", "1/16t", "swing"]
 
+  // Dial scale, matching the printed numerals (40–208, step 4 ticks).
+  readonly property real dialMinBpm: 40
+  readonly property real dialMaxBpm: 208
+  readonly property var dialNumerals: [40, 60, 80, 100, 120, 140, 160, 180, 200]
+
   function clampInt(v, lo, hi, fallback) {
     v = Math.round(Number(v))
     if (!isFinite(v)) return fallback
     return Math.min(hi, Math.max(lo, v))
+  }
+
+  function dialAngle(b) { // radians, 0 at 12 o'clock, clockwise
+    var frac = (Math.min(dialMaxBpm, Math.max(dialMinBpm, b)) - dialMinBpm) / (dialMaxBpm - dialMinBpm)
+    return frac * Math.PI * 2
+  }
+
+  function tempoTerm(b) {
+    if (b < 60) return "LARGO"
+    if (b < 66) return "LARGHETTO"
+    if (b < 76) return "ADAGIO"
+    if (b < 108) return "ANDANTE"
+    if (b < 120) return "MODERATO"
+    if (b < 168) return "ALLEGRO"
+    if (b < 200) return "PRESTO"
+    return "PRESTISSIMO"
   }
 
   implicitHeight: column.implicitHeight
@@ -175,12 +202,48 @@ Item {
     Timer { id: msRepeat; interval: 80; repeat: true; onTriggered: ms.action() }
   }
 
+  // Large thin chevron beside the dial; auto-repeats while held.
+  component ChevronStep: Item {
+    id: cs
+    property string glyph: "‹"
+    property var action: function() {}
+    width: csText.implicitWidth
+    height: csText.implicitHeight
+
+    Text {
+      id: csText
+      anchors.centerIn: parent
+      text: cs.glyph
+      color: csArea.pressed ? "#ffffff" : root.accent
+      font.family: root.fontFamily
+      font.pixelSize: Math.max(30, Style.font.title + 10)
+      font.bold: true
+      textFormat: Text.PlainText
+
+      Behavior on color { ColorAnimation { duration: 80 } }
+    }
+
+    MouseArea {
+      id: csArea
+      anchors.fill: parent
+      anchors.margins: -Style.space(6)
+      cursorShape: Qt.PointingHandCursor
+      onClicked: cs.action()
+      onPressed: csDelay.start()
+      onReleased: { csDelay.stop(); csRepeat.stop() }
+      onCanceled: { csDelay.stop(); csRepeat.stop() }
+    }
+
+    Timer { id: csDelay; interval: 400; onTriggered: csRepeat.start() }
+    Timer { id: csRepeat; interval: 80; repeat: true; onTriggered: cs.action() }
+  }
+
   Column {
     id: column
     width: parent.width
     spacing: Style.space(14)
 
-    // ---------- Hero: icon · title/status · transport ----------
+    // ---------- Hero ----------
     PanelHero {
       width: parent.width
       foreground: root.foreground
@@ -200,45 +263,167 @@ Item {
 
     PanelSeparator { foreground: root.foreground }
 
-    // ---------- Transport ----------
-    Item {
-      width: parent.width
-      implicitHeight: Math.max(transportHeader.implicitHeight, transportMeta.implicitHeight)
+    // ---------- Dial: ‹ ◐ › ----------
+    Row {
+      anchors.horizontalCenter: parent.horizontalCenter
+      spacing: Style.space(10)
 
-      PanelSectionHeader {
-        id: transportHeader
-        text: "TRANSPORT"
-        foreground: root.foreground
-        fontFamily: root.fontFamily
-        anchors.left: parent.left
+      ChevronStep { glyph: "‹"; anchors.verticalCenter: parent.verticalCenter; action: function() { root.stepBpm(-1) } }
+
+      Item {
+        id: dial
+        width: Style.space(230)
+        height: width
         anchors.verticalCenter: parent.verticalCenter
+
+        // Dial face.
+        Rectangle {
+          anchors.fill: parent
+          radius: width / 2
+          color: Qt.rgba(1, 1, 1, 0.03)
+          border.color: root.border
+          border.width: 1
+        }
+
+        // Progress arc at the current tempo, over a dim full-circle track.
+        Canvas {
+          id: dialArc
+          anchors.fill: parent
+          anchors.margins: Style.space(8)
+
+          onPaint: {
+            var ctx = getContext("2d")
+            ctx.reset()
+            ctx.lineWidth = 3
+            var r = width / 2 - ctx.lineWidth
+            var cx = width / 2
+            var cy = height / 2
+            ctx.strokeStyle = "rgba(255,255,255,0.10)"
+            ctx.beginPath()
+            ctx.arc(cx, cy, r, 0, Math.PI * 2)
+            ctx.stroke()
+            ctx.strokeStyle = "#4dbbd3"
+            ctx.beginPath()
+            ctx.arc(cx, cy, r, -Math.PI / 2, -Math.PI / 2 + root.dialAngle(root.bpm))
+            ctx.stroke()
+          }
+
+          Connections {
+            target: root
+            function onBpmChanged() { dialArc.requestPaint() }
+          }
+        }
+
+        // Tick ring: one tick per 4 bpm, numerals at the decades.
+        Repeater {
+          model: 43 // 40..208 step 4
+
+          Rectangle {
+            required property int index
+            readonly property real val: 40 + index * 4
+            readonly property real ang: root.dialAngle(val)
+            readonly property bool major: root.dialNumerals.indexOf(val) >= 0
+            readonly property real rTick: dial.width / 2 - Style.space(12)
+
+            width: major ? 2 : 1
+            height: major ? Style.space(8) : Style.space(5)
+            x: dial.width / 2 + Math.sin(ang) * rTick - width / 2
+            y: dial.height / 2 - Math.cos(ang) * rTick - height / 2
+            rotation: ang * 180 / Math.PI
+            radius: width / 2
+            color: major ? root.accent : root.foreground
+            opacity: major ? 0.9 : 0.35
+          }
+        }
+
+        // Numerals at the major ticks.
+        Repeater {
+          model: root.dialNumerals
+
+          Text {
+            required property var modelData
+            readonly property real ang: root.dialAngle(modelData)
+            readonly property real rNum: dial.width / 2 - Style.space(26)
+            readonly property real w2: width / 2
+            readonly property real h2: height / 2
+
+            x: dial.width / 2 + Math.sin(ang) * rNum - w2
+            y: dial.height / 2 - Math.cos(ang) * rNum - h2
+            text: String(modelData)
+            color: root.foreground
+            opacity: 0.55
+            font.family: root.fontFamily
+            font.pixelSize: Math.max(9, Style.font.body - 5)
+            font.bold: true
+            textFormat: Text.PlainText
+          }
+        }
+
+        // Center disc: START/STOP control, big tempo number, tempo term.
+        Rectangle {
+          id: centerDisc
+          anchors.centerIn: parent
+          width: dial.width * 0.54
+          height: width
+          radius: width / 2
+          color: root.metroActive ? root.accent : Qt.rgba(0.30, 0.73, 0.82, 0.18)
+          border.color: root.accent
+          border.width: 1
+
+          Behavior on color { ColorAnimation { duration: 150 } }
+
+          Column {
+            anchors.centerIn: parent
+            spacing: 0
+
+            Text {
+              anchors.horizontalCenter: parent.horizontalCenter
+              text: root.metroActive ? "STOP" : "START"
+              color: "#ffffff"
+              font.family: root.fontFamily
+              font.pixelSize: Math.max(9, Style.font.body - 4)
+              font.bold: true
+              font.letterSpacing: 2
+              textFormat: Text.PlainText
+            }
+
+            Text {
+              anchors.horizontalCenter: parent.horizontalCenter
+              text: root.bpm
+              color: "#ffffff"
+              font.family: root.fontFamily
+              font.pixelSize: Math.max(36, Style.font.title + 16)
+              font.bold: true
+              textFormat: Text.PlainText
+            }
+
+            Text {
+              anchors.horizontalCenter: parent.horizontalCenter
+              text: root.tempoTerm(root.bpm)
+              color: "#ffffff"
+              opacity: 0.85
+              font.family: root.fontFamily
+              font.pixelSize: Math.max(8, Style.font.body - 6)
+              font.bold: true
+              font.letterSpacing: 1
+              textFormat: Text.PlainText
+            }
+          }
+
+          MouseArea {
+            id: discArea
+            anchors.fill: parent
+            cursorShape: Qt.PointingHandCursor
+            onClicked: { root.metroActive = !root.metroActive; root.currentBeat = 0 }
+          }
+        }
       }
 
-      Text {
-        id: transportMeta
-        text: root.bpm + " BPM · " + root.beatsPerBar + "/4"
-        color: Qt.darker(root.foreground, 1.4)
-        font.family: root.fontFamily
-        font.pixelSize: Style.font.caption
-        font.bold: true
-        anchors.right: metroPlay.left
-        anchors.rightMargin: Style.space(10)
-        anchors.verticalCenter: parent.verticalCenter
-      }
-
-      PanelActionButton {
-        id: metroPlay
-        iconText: root.metroActive ? "■" : "▶"
-        foreground: root.metroActive ? "#4ade80" : root.foreground
-        size: Style.space(32)
-        anchors.right: parent.right
-        anchors.rightMargin: Style.space(2)
-        anchors.verticalCenter: parent.verticalCenter
-        onClicked: { root.metroActive = !root.metroActive; root.currentBeat = 0 }
-      }
+      ChevronStep { glyph: "›"; anchors.verticalCenter: parent.verticalCenter; action: function() { root.stepBpm(1) } }
     }
 
-    // Beat dots — centered, the eye-anchor of the panel.
+    // Beat dots — the current beat lights up, green-teal accent on the
+    // downbeat, matching the accent ring on the dial.
     Row {
       anchors.horizontalCenter: parent.horizontalCenter
       spacing: Style.space(10)
@@ -250,9 +435,9 @@ Item {
           height: Style.space(14)
           radius: width / 2
           color: root.metroActive && root.currentBeat === index + 1
-            ? (index === 0 ? "#4ade80" : root.foreground)
+            ? (index === 0 ? root.accent : root.foreground)
             : "transparent"
-          border.color: index === 0 ? "#4ade80" : root.foreground
+          border.color: index === 0 ? root.accent : root.foreground
           border.width: root.metroActive && root.currentBeat === index + 1 ? 2 : 1
           opacity: root.metroActive && root.currentBeat === index + 1 ? 1 : 0.45
           Behavior on opacity { NumberAnimation { duration: 80 } }
@@ -261,55 +446,32 @@ Item {
       }
     }
 
-    // Tempo: big number, fine steppers, tap.
-    Row {
+    // TAP button, centered under the dial.
+    Rectangle {
       anchors.horizontalCenter: parent.horizontalCenter
-      spacing: Style.space(10)
-
-      MetroStep { glyph: "−"; anchors.verticalCenter: parent.verticalCenter; action: function() { root.stepBpm(-1) } }
+      width: tapLabel.implicitWidth + Style.space(28)
+      height: Style.space(30)
+      radius: height / 2
+      color: tapMa.pressed ? Qt.rgba(0.30, 0.73, 0.82, 0.35) : Qt.rgba(1, 1, 1, 0.06)
+      border.color: root.accent
+      border.width: 1
 
       Text {
-        anchors.verticalCenter: parent.verticalCenter
-        text: root.bpm
+        id: tapLabel
+        anchors.centerIn: parent
+        text: "TAP"
         color: root.foreground
+        opacity: 0.9
         font.family: root.fontFamily
-        font.pixelSize: Math.max(28, Style.font.title + 6)
+        font.pixelSize: Math.max(11, Style.font.body - 2)
         font.bold: true
+        font.letterSpacing: 1
         textFormat: Text.PlainText
-
-        Behavior on color { ColorAnimation { duration: 120 } }
       }
-
-      MetroStep { glyph: "+"; anchors.verticalCenter: parent.verticalCenter; action: function() { root.stepBpm(1) } }
-
-      Item { width: Style.space(8); height: 1 }
-
-      Rectangle {
-        anchors.verticalCenter: parent.verticalCenter
-        width: tapLabel.implicitWidth + Style.space(16)
-        height: Style.space(26)
-        radius: height / 2
-        color: tapMa.pressed ? Qt.rgba(1,1,1,0.15) : Qt.rgba(1,1,1,0.06)
-        border.color: root.border
-        border.width: 1
-
-        Text {
-          id: tapLabel
-          anchors.centerIn: parent
-          text: "TAP"
-          color: root.foreground
-          opacity: 0.8
-          font.family: root.fontFamily
-          font.pixelSize: Math.max(10, Style.font.body - 3)
-          font.bold: true
-          font.letterSpacing: 1
-          textFormat: Text.PlainText
-        }
-        MouseArea { id: tapMa; anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: root.tapTempo() }
-      }
+      MouseArea { id: tapMa; anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: root.tapTempo() }
     }
 
-    // Tempo slider — dial the bpm in directly.
+    // Tempo slider — dial the bpm in directly (arc and number follow along).
     PanelSlider {
       id: bpmSlider
       width: parent.width
@@ -350,9 +512,9 @@ Item {
             anchors.fill: parent
             radius: root.cornerRadius
             color: root.subdivision === subTile.modelData.label
-              ? Qt.rgba(0.29, 0.87, 0.50, 0.22)
+              ? Qt.rgba(0.30, 0.73, 0.82, 0.22)
               : (tileMa.pressed ? Qt.rgba(1,1,1,0.15) : Qt.rgba(1,1,1,0.05))
-            border.color: root.subdivision === subTile.modelData.label ? "#4ade80" : root.border
+            border.color: root.subdivision === subTile.modelData.label ? root.accent : root.border
             border.width: 1
             Behavior on color { ColorAnimation { duration: 100 } }
           }
@@ -364,7 +526,7 @@ Item {
             Text {
               anchors.horizontalCenter: parent.horizontalCenter
               text: subTile.modelData.label
-              color: root.subdivision === subTile.modelData.label ? "#4ade80" : root.foreground
+              color: root.subdivision === subTile.modelData.label ? root.accent : root.foreground
               opacity: root.subdivision === subTile.modelData.label ? 1 : 0.75
               font.family: root.fontFamily
               font.pixelSize: Math.max(10, Style.font.body - 2)
@@ -378,7 +540,7 @@ Item {
               visible: subTile.modelData.tuplet !== ""
               anchors.horizontalCenter: parent.horizontalCenter
               text: subTile.modelData.tuplet
-              color: root.subdivision === subTile.modelData.label ? "#4ade80" : root.foreground
+              color: root.subdivision === subTile.modelData.label ? root.accent : root.foreground
               opacity: root.subdivision === subTile.modelData.label ? 0.9 : 0.4
               font.family: root.fontFamily
               font.pixelSize: Math.max(9, Style.font.body - 4)
@@ -391,7 +553,7 @@ Item {
               anchors.horizontalCenter: parent.horizontalCenter
               width: notesText.width
               height: 1
-              color: root.subdivision === subTile.modelData.label ? "#4ade80" : root.foreground
+              color: root.subdivision === subTile.modelData.label ? root.accent : root.foreground
               opacity: root.subdivision === subTile.modelData.label ? 0.7 : 0.3
             }
 
@@ -399,7 +561,7 @@ Item {
               id: notesText
               anchors.horizontalCenter: parent.horizontalCenter
               text: subTile.modelData.notes
-              color: root.subdivision === subTile.modelData.label ? "#4ade80" : root.foreground
+              color: root.subdivision === subTile.modelData.label ? root.accent : root.foreground
               opacity: root.subdivision === subTile.modelData.label ? 0.95 : 0.45
               font.family: root.fontFamily
               font.pixelSize: Math.max(16, Style.font.body + 6)
