@@ -79,7 +79,7 @@ tests/run.sh   # arg validation, beat-JSON schema, BrokenPipe teardown
 ## Development
 
 ```bash
-git clone https://github.com/bronder/omarchy-metronome
+# Source: https://github.com/bronder/omarchy-metronome
 # NOTE: `omarchy plugin validate` refuses symlinks — validate the real path,
 # then link it for development:
 omarchy plugin validate "$PWD/omarchy-metronome"
