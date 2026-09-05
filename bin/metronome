@@ -2,8 +2,8 @@
 """Metronome click-track generator.
 
 Writes a continuous s16le stereo 44.1 kHz click track to stdout (pipe it
-into `pw-play --raw -`), and emits one JSON line per click on stderr so the
-UI can light up beat dots in time:
+into `pw-play --raw --format=s16 --rate=44100 --channels=2 -`), and emits
+one JSON line per click on stderr so the UI can light up beat dots in time:
 
     {"beat": 1, "beats": 4, "sub": 0, "subs": 2}
 
@@ -17,6 +17,7 @@ Usage: metronome <bpm> <beats-per-bar> <subdivision>
 
 import json
 import math
+import os
 import sys
 import time
 
@@ -36,30 +37,65 @@ ACCENT = (1500.0, 0.55, 0.030)
 BEAT = (1000.0, 0.38, 0.030)
 TICK = (2200.0, 0.16, 0.018)
 
+USAGE = "usage: metronome <bpm> <beats-per-bar> <subdivision>"
+
+
+def emit_beat(obj: dict) -> None:
+    # Never let the UI channel pollute stdout: with stderr closed at exec
+    # (2>&-) CPython sets sys.stderr to None, and print(file=None) falls
+    # back to sys.stdout — PCM corruption. Treat missing/closed stderr as
+    # dead instead of printing anywhere.
+    err = sys.stderr
+    if err is None or getattr(err, "closed", False):
+        raise OSError("stderr unavailable")
+    print(json.dumps(obj), file=err, flush=True)
+
 
 def render(freq: float, amp: float, length: float) -> bytes:
     # A short sine burst with a fast exponential decay: a sharp tick.
-    n = int(RATE * length)
+    # The last 2 ms are linearly faded to zero so non-integer-cycle
+    # clicks (e.g. 2200 Hz * 18 ms = 39.6 cycles) end without a pop.
+    n = int(round(RATE * length))
+    fade = int(RATE * 0.002)
     out = bytearray()
     for i in range(n):
         env = amp * 32767.0 * math.exp(-i / (RATE * (length / 5)))
+        if fade > 0 and i >= n - fade:
+            env *= (n - i) / fade
         sample = int(env * math.sin(2 * math.pi * freq * i / RATE))
         out += sample.to_bytes(2, "little", signed=True) * 2  # stereo
     return bytes(out)
 
 
 def main() -> None:
-    if len(sys.argv) < 3:
-        print("usage: metronome <bpm> <beats-per-bar> [subdivision]", file=sys.stderr)
+    # fd 2 closed at exec (2>&-): sys.stderr is None and print(file=None)
+    # would fall back to stdout. Point it at devnull up front so usage
+    # errors never pollute the PCM stream either.
+    if sys.stderr is None:
+        try:
+            sys.stderr = open(os.devnull, "w")
+        except OSError:
+            pass
+    if len(sys.argv) != 4:
+        print(USAGE, file=sys.stderr)
         sys.exit(2)
 
     try:
-        bpm = max(20, min(300, int(sys.argv[1])))
-        beats = max(1, min(12, int(sys.argv[2])))
+        bpm = int(sys.argv[1])
+        beats = int(sys.argv[2])
     except ValueError:
-        print("usage: metronome <bpm> <beats-per-bar> [subdivision]", file=sys.stderr)
+        print(USAGE, file=sys.stderr)
         sys.exit(2)
-    weights = SUBDIVISIONS.get(sys.argv[3] if len(sys.argv) > 3 else "1/4", [1.0])
+    if not 20 <= bpm <= 300:
+        print("metronome: bad bpm (20-300)", file=sys.stderr)
+        sys.exit(2)
+    if not 1 <= beats <= 12:
+        print("metronome: bad beats (1-12)", file=sys.stderr)
+        sys.exit(2)
+    weights = SUBDIVISIONS.get(sys.argv[3])
+    if weights is None:
+        print("metronome: bad subdivision", file=sys.stderr)
+        sys.exit(2)
 
     spb = 60.0 / bpm                    # seconds per beat
     frame = b"\x00\x00\x00\x00"
@@ -69,10 +105,13 @@ def main() -> None:
         "beat": render(*BEAT),
         "tick": render(*TICK),
     }
+    sound_frames = {k: len(v) // 4 for k, v in sounds.items()}
 
     out = sys.stdout.buffer
     beat = 0
+    stderr_dead = False
     start = time.monotonic()
+    frames_written = 0
     try:
         while True:
             beat += 1
@@ -81,38 +120,95 @@ def main() -> None:
             # Clicks within this beat, each owning weights[i] of it.
             offset = 0.0
             for i, w in enumerate(weights):
+                share = w * spb
+                next_deadline = start + (beat - 1) * spb + offset + share
+                offset += share
+
+                # If we are already more than a beat late (suspend, heavy
+                # load), rebase the clock instead of burst-catchup: phase
+                # stays correct from here, queued audio never plays late
+                # forever.
+                now = time.monotonic()
+                if now - next_deadline > spb:
+                    elapsed_beats = (now - start) / spb
+                    skip = int(elapsed_beats) - (beat - 1)
+                    if skip > 0:
+                        beat += skip
+                        is_downbeat = (beat - 1) % beats == 0
+                        # offset already includes this sub's share, so this
+                        # keeps next_deadline == now + share exactly, for any
+                        # weight distribution (swing is [2/3, 1/3]).
+                        start = now - ((beat - 1) * spb + offset - share)
+                        next_deadline = now + share
+
                 if i == 0:
-                    sound = sounds["accent"] if is_downbeat else sounds["beat"]
+                    key = "accent" if is_downbeat else "beat"
+                    sound = sounds[key]
                 else:
+                    key = "tick"
                     sound = sounds["tick"]
-                out.write(sound)
-                out.flush()
-                print(json.dumps({
-                    "beat": (beat - 1) % beats + 1,
-                    "beats": beats,
-                    "sub": i,
-                    "subs": len(weights),
-                }), file=sys.stderr, flush=True)
+                try:
+                    out.write(sound)
+                    out.flush()
+                except BrokenPipeError:
+                    return
+                frames_written += sound_frames[key]
+
+                if not stderr_dead:
+                    try:
+                        emit_beat({
+                            "beat": (beat - 1) % beats + 1,
+                            "beats": beats,
+                            "sub": i,
+                            "subs": len(weights),
+                        })
+                    except (BrokenPipeError, OSError, ValueError, AttributeError):
+                        # UI channel gone: keep the audio running, stop
+                        # emitting instead of dying with it.
+                        stderr_dead = True
+                        try:
+                            sys.stderr = open(os.devnull, "w")
+                        except OSError:
+                            pass
 
                 # Fill this click's share of the beat with silence, paced
                 # to absolute wall-clock deadlines so drift does not build.
-                share = w * spb
-                silence = max(0, int(RATE * share) - len(sound) // 4)
-                chunk = max(1, RATE // 20)
+                # Frame target is absolute (deadline - start) so int()
+                # truncation never accumulates.
+                ideal_total = int(round((next_deadline - start) * RATE))
+                silence = max(0, ideal_total - frames_written)
+                if silence <= 0:
+                    continue
+                # One shot for tiny gaps (high bpm): a 3 ms sleep's jitter
+                # would dominate; chunked pacing only pays off above ~100 ms.
+                chunk = max(1, min(RATE // 20, silence))
                 written = 0
-                next_deadline = start + (beat - 1) * spb + offset + share
                 while written < silence:
+                    # Late already: drop the rest instead of burst-writing
+                    # stale audio into the pw-play FIFO.
+                    if time.monotonic() >= next_deadline:
+                        break
                     n = min(chunk, silence - written)
-                    out.write(frame * n)
-                    out.flush()
+                    try:
+                        out.write(frame * n)
+                        out.flush()
+                    except BrokenPipeError:
+                        return
                     written += n
+                    frames_written += n
                     now = time.monotonic()
                     target = next_deadline - (silence - written) / RATE
                     if target > now:
                         time.sleep(target - now)
-                offset += share
-    except BrokenPipeError:
+                # Account dropped frames so the absolute target stays right.
+                frames_written += max(0, silence - written)
+    except (BrokenPipeError, KeyboardInterrupt):
         pass
+    finally:
+        try:
+            out.flush()
+        except (BrokenPipeError, OSError, ValueError):
+            pass
 
 
 if __name__ == "__main__":

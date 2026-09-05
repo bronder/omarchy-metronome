@@ -8,7 +8,7 @@ import qs.Ui
 // Fullscreen summon overlay hosting the shared MetronomeBody. The bar icon
 // opens the same tool as a popup anchored under itself — see BarWidget.qml.
 //
-// Also owns the pinned corner window (`omarchy-shell bronder.metronome pin`):
+// Also owns the pinned corner window (`omarchy-shell bronder.metronome.pin toggle`):
 // a small always-on-top metronome that keeps playing while you work. The
 // window lives at this plugin root because a PanelWindow nested inside the
 // bar widget's item tree maps but never renders on this Quickshell build.
@@ -26,6 +26,9 @@ Item {
   // Pinned corner window state.
   property bool pinned: false
   property var pendingPin: null
+  // The pinned window anchors once at pin() time and never follows the
+  // overlay's targetScreen afterwards.
+  property var pinnedScreen: null
 
   property color background: Color.menu.background
   property color foreground: Color.menu.text
@@ -35,7 +38,12 @@ Item {
   readonly property int cornerRadius: Style.cornerRadius
   property int contentMargin: Style.spacing.panelPadding
   property int cardWidth: Math.min(Style.space(560), (root.targetScreen ? root.targetScreen.width : 2160) - Style.gapsOut * 2)
-  property int cardHeight: Math.min(contentMargin * 2 + bodyNatural.implicitHeight, (root.targetScreen ? root.targetScreen.height : 3840) - Style.gapsOut * 2)
+  // Size from the LIVE body's implicit height once the overlay exists — the
+  // old inert-copy measure under-measured (subdivisions + time-signature
+  // clipped outside the card). bodyNatural covers pre-open only. No loop:
+  // the body's implicit height derives from cardWidth, never cardHeight.
+  property int contentMeasure: overlayLoader.item ? overlayLoader.item.liveBodyImplicit() : bodyNatural.implicitHeight
+  property int cardHeight: Math.min(contentMargin * 2 + root.contentMeasure, (root.targetScreen ? root.targetScreen.height : 3840) - Style.gapsOut * 2)
 
   // Which output the overlay shows on. Default is the monitor Hyprland
   // currently has focused, resolved at open() time; a summon payload can
@@ -78,6 +86,7 @@ Item {
     // payload when its component completes; one that already exists has long
     // consumed that hook, so open() delivers to it directly below.
     var livePanel = overlayLoader.item
+    var wasOpened = root.opened
     var wanted = payload.screen
     root.pendingPayload = payload
     var switchingScreen = false
@@ -93,11 +102,14 @@ Item {
         root.targetScreen = root.firstScreen()
       }
     } else {
-      // Open instantly on a synchronous fallback; the async
-      // focused-monitor probe below refines it when hyprctl/jq answer.
+      // Open instantly on a synchronous fallback; the async focused-monitor
+      // probe refines it on a fresh open only — re-summons never re-probe,
+      // so the overlay can't jump monitors mid-session.
       if (!root.targetScreen) root.targetScreen = root.firstScreen()
-      screenProc.running = false
-      screenProc.running = true
+      if (!wasOpened) {
+        screenProc.running = false
+        screenProc.running = true
+      }
     }
     root.opened = true
 
@@ -122,6 +134,7 @@ Item {
   function pin() {
     if (root.pinned) return
     var p = root.pendingPin || {}
+    root.pendingPin = null // consume once — never resurrect stale tempo
     // Pinning while the overlay is up: inherit its live settings — keeping
     // the sound running, unless the payload says otherwise — and close the
     // overlay, so the two bodies never play together.
@@ -139,6 +152,8 @@ Item {
     if (p.sub !== undefined && pinnedBody.validSubdivisions.indexOf(p.sub) >= 0)
       pinnedBody.subdivision = p.sub
     pinnedBody.metroActive = p.metro === true
+    // Anchor now: the pinned window keeps its own screen from here on.
+    root.pinnedScreen = root.targetScreen ? root.targetScreen : root.firstScreen()
     root.pinned = true // pinnedBody.active follows and starts the pipeline
   }
 
@@ -148,6 +163,7 @@ Item {
   }
 
   function clampGuard(v, lo, hi, fallback) {
+    if (v === null || v === undefined || v === "" || typeof v === "boolean") return fallback
     v = Math.round(Number(v))
     if (!isFinite(v)) return fallback
     return Math.min(hi, Math.max(lo, v))
@@ -168,7 +184,7 @@ Item {
 
   PanelWindow {
     id: pinnedWindow
-    visible: root.pinned
+    visible: root.pinned && root.pinnedScreen !== null
     anchors { top: true; right: true }
     margins { top: Style.gapsOut; right: Style.gapsOut }
     color: "transparent"
@@ -177,8 +193,8 @@ Item {
     WlrLayershell.layer: WlrLayer.Top
     WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
 
-    // Anchor to the focused/default screen at creation, like the overlay.
-    screen: root.targetScreen
+    // Own anchor, captured at pin() time — never follows the overlay.
+    screen: root.pinnedScreen ? root.pinnedScreen : root.firstScreen()
 
     implicitWidth: pinnedCard.width
     implicitHeight: pinnedCard.height
@@ -196,7 +212,9 @@ Item {
       MetronomeBody {
         id: pinnedBody
         width: pinnedCard.width - pinnedCard.pad * 2
-        height: implicitHeight
+        // `pinned` nudge: same load-time under-measure as the popup (see
+        // BarWidget); re-read at pin time, when the theme has settled.
+        height: implicitHeight + (root.pinned ? 0 : 0)
         compact: true
         active: root.pinned
       }
@@ -216,7 +234,9 @@ Item {
 
   Process {
     id: screenProc
-    command: ["bash", "-c", "hyprctl monitors -j | jq -r '.[] | select(.focused) | .name'"]
+    // Absolute tool paths: no PATH hijack can turn this probe into code
+    // exec. Missing tools fall through to the synchronous fallback below.
+    command: ["/usr/bin/bash", "-c", "/usr/bin/hyprctl monitors -j | /usr/bin/jq -r '.[] | select(.focused) | .name'"]
     stdout: StdioCollector {
       onStreamFinished: {
         var name = text.trim()
@@ -236,12 +256,12 @@ Item {
 
   function close() {
     root.opened = false
+    if (root.shell && typeof root.shell.hide === "function")
+      root.shell.hide((root.manifest && root.manifest.id) || "bronder.metronome")
   }
 
   function dismiss() {
-    root.opened = false
-    if (root.shell && typeof root.shell.hide === "function")
-      root.shell.hide((root.manifest && root.manifest.id) || "bronder.metronome")
+    root.close()
   }
 
   // Inert measuring instance: drives cardHeight from the content's natural
@@ -284,9 +304,14 @@ Item {
       }
 
       // Live settings of the overlay body, for hand-off to the pinned
-      // corner window (see pin()).
+      // corner window (see pin()). liveBodyImplicit feeds cardHeight —
+      // the card sizes from the live content, not the inert copy.
       function liveState() {
         return { bpm: body.bpm, beats: body.beatsPerBar, sub: body.subdivision, metro: body.metroActive }
+      }
+
+      function liveBodyImplicit() {
+        return body.implicitHeight
       }
 
       Component.onCompleted: applyPending()

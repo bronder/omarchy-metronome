@@ -44,7 +44,15 @@ tests/run.sh        # arg-validation, beat-JSON schema, and pipe-teardown tests
 ## Payload form
 
 ```bash
-omarchy-shell shell summon bronder.metronome '{"metro":true,"bpm":140,"beats":3,"sub":"swing"}'
+omarchy-shell shell summon bronder.metronome '{"metro":true,"bpm":140,"beats":3,"sub":"swing","screen":"DP-1","pin":true}'
+```
+
+All keys optional. `screen` picks the output (`hyprctl` focused monitor by
+default); `pin:true` opens the always-on-top corner window instead of the
+fullscreen overlay. Pin verbs (the IPC target is `bronder.metronome.pin`):
+
+```bash
+omarchy-shell bronder.metronome.pin toggle   # pin / unpin / toggle
 ```
 
 ## Install
@@ -71,9 +79,11 @@ tests/run.sh   # arg validation, beat-JSON schema, BrokenPipe teardown
 ## Development
 
 ```bash
-ln -s "$PWD" ~/.config/omarchy/plugins/bronder.metronome
-omarchy plugin validate "$PWD"
-omarchy plugin enable bronder.metronome
+git clone https://github.com/bronder/omarchy-metronome
+# NOTE: `omarchy plugin validate` refuses symlinks — validate the real path,
+# then link it for development:
+omarchy plugin validate "$PWD/omarchy-metronome"
+ln -s "$PWD/omarchy-metronome" ~/.config/omarchy/plugins/bronder.metronome
 omarchy-shell shell summon bronder.metronome '{}'
 ```
 

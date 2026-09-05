@@ -20,11 +20,9 @@ tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 
 # --- 1. argument validation -----------------------------------------------
-# The generator itself clamps out-of-range bpm/beats and falls back to 1/4
-# for unknown subdivisions; the strict rejection contract lives in
-# metro-pipeline (all QML paths go through it). Here: non-numeric args must
-# fail, and out-of-range args must be clamped, never crash. A 124 exit is a
-# timeout — the generator ran, which counts as a failure here too.
+# Both the generator and metro-pipeline strictly reject bad args (exit 2):
+# non-numeric, out-of-range, unknown subdivision, wrong arity. A 124 exit
+# is a timeout — the generator ran, which counts as a failure here too.
 timeout 2 "$bin/metronome" abc 4 1/4 >/dev/null 2>"$tmp/badbpm"
 rc=$?; [ $rc -eq 2 ] && ! grep -q "Traceback" "$tmp/badbpm"
 check "metronome rejects non-numeric bpm with usage (exit 2, no traceback)" $?
@@ -33,9 +31,18 @@ timeout 2 "$bin/metronome" 120 def 1/4 >/dev/null 2>"$tmp/badbeats"
 rc=$?; [ $rc -eq 2 ] && ! grep -q "Traceback" "$tmp/badbeats"
 check "metronome rejects non-numeric beats with usage (exit 2, no traceback)" $?
 
-timeout 2 "$bin/metronome" 120 >/dev/null 2>&1
+timeout 2 "$bin/metronome" 120 4 >/dev/null 2>&1
 rc=$?; [ $rc -ne 0 ] && [ $rc -ne 124 ]
 check "metronome rejects missing args" $?
+
+"$bin/metronome" 400 4 1/4 >/dev/null 2>&1
+check "metronome rejects out-of-range bpm (exit 2)" $([ $? -eq 2 ]; echo $?)
+"$bin/metronome" 19 4 1/4 >/dev/null 2>&1
+check "metronome rejects low bpm (exit 2)" $([ $? -eq 2 ]; echo $?)
+"$bin/metronome" 120 99 1/4 >/dev/null 2>&1
+check "metronome rejects out-of-range beats (exit 2)" $([ $? -eq 2 ]; echo $?)
+"$bin/metronome" 120 4 waltz >/dev/null 2>&1
+check "metronome rejects unknown subdivision (exit 2)" $([ $? -eq 2 ]; echo $?)
 
 "$bin/metro-pipeline" 400 4 1/4 >/dev/null 2>&1
 check "metro-pipeline rejects bad bpm" $([ $? -eq 2 ]; echo $?)
@@ -50,18 +57,31 @@ check "metro-pipeline rejects non-numeric bpm" $([ $? -eq 2 ]; echo $?)
 "$bin/metro-pipeline" 120 4 1/3 >/dev/null 2>&1
 check "metro-pipeline rejects unknown subdivision" $([ $? -eq 2 ]; echo $?)
 
-# Out-of-range values are clamped by the generator, never crash or misbehave:
-# bpm 19 → 20, beats 99 → 12 (fast enough to emit beats within the timeout).
-timeout 2 "$bin/metronome" 19 99 1/4 >/dev/null 2>"$tmp/clamp"
-python3 -c '
+# --- 1b. bar wrap at the edges ------------------------------------------
+# beats=1 always reports beat 1; beats=12 cycles 1..12.
+timeout 2 "$bin/metronome" 240 1 1/4 >/dev/null 2>"$tmp/wrap1"
+python3 - "$tmp/wrap1" <<'EOF'
 import json, sys
 lines = [l for l in open(sys.argv[1]).read().splitlines() if l.strip()]
-assert lines, "no beat lines while clamping"
+assert lines, "no beat lines for beats=1"
 for l in lines:
     d = json.loads(l)
-    assert 1 <= d["beat"] <= 12 and d["beats"] == 12, d
-' "$tmp/clamp"
-check "metronome clamps out-of-range bpm/beats" $?
+    assert d["beat"] == 1 and d["beats"] == 1, d
+EOF
+check "beats=1 always reports beat 1" $?
+
+timeout 3 "$bin/metronome" 240 12 1/4 >/dev/null 2>"$tmp/wrap12"
+python3 - "$tmp/wrap12" <<'EOF'
+import json, sys
+lines = [l for l in open(sys.argv[1]).read().splitlines() if l.strip()]
+assert lines, "no beat lines for beats=12"
+seen = [json.loads(l)["beat"] for l in lines]
+assert min(seen) >= 1 and max(seen) <= 12, seen[:8]
+# ordering: consecutive beats increment mod 12
+for a, b in zip(seen, seen[1:]):
+    assert b == (a % 12 + 1), (a, b)
+EOF
+check "beats=12 cycles 1..12 in order" $?
 
 # --- 2. beat-JSON schema over a bounded run --------------------------------
 # 240 bpm, 3 beats/bar, 1/8 (2 subs): one bar = 3 beats * 0.25 s = 0.75 s.
@@ -100,7 +120,48 @@ check "stdout is frame-aligned PCM" $?
 # --- 3. clean teardown on a closed pipe ------------------------------------
 head -c 100000 /dev/null | "$bin/metronome" 120 4 1/4 2>"$tmp/trace" | head -c 0
 grep -q "Traceback" "$tmp/trace"
-check "no traceback on broken pipe" $([ $? -ne 0 ]; echo $?)
+check "no traceback on broken stdout pipe" $([ $? -ne 0 ]; echo $?)
+
+# --- 3b. closed stderr must not kill the audio ------------------------------
+# UI channel gone (fd closed AND /dev/null): generator keeps writing pure
+# PCM, no traceback, no JSON leaked into stdout (print(file=None) falls
+# back to stdout when fd 2 is closed — see emit_beat).
+"$bin/metronome" 120 4 1/4 2>&- >"$tmp/audio-nostderr2" &
+mpid2=$!
+sleep 1
+kill $mpid2 2>/dev/null; wait $mpid2 2>/dev/null || true
+python3 - "$tmp/audio-nostderr2" <<'EOF'
+import sys
+data = open(sys.argv[1], "rb").read()
+assert len(data) % 4 == 0, "stdout not frame-aligned with stderr closed"
+assert len(data) > 44100, "audio stopped when stderr closed"
+assert b'"beat"' not in data, "beat JSON leaked into stdout when stderr closed"
+EOF
+check "audio continues with stderr closed, stdout stays pure PCM" $?
+"$bin/metronome" 120 4 1/4 2>/dev/null >"$tmp/audio-devnull" &
+mpid3=$!
+sleep 1
+kill $mpid3 2>/dev/null; wait $mpid3 2>/dev/null || true
+python3 - "$tmp/audio-devnull" <<'EOF'
+import sys
+data = open(sys.argv[1], "rb").read()
+assert len(data) % 4 == 0 and len(data) > 44100, "audio stopped with stderr to /dev/null"
+EOF
+check "audio continues with stderr to /dev/null" $?
+
+# --- 3c. swing timing --------------------------------------------------------
+# 120 bpm swing: sub0 owns 2/3 beat (~333ms), sub1 owns 1/3 (~167ms).
+timeout 4 "$bin/metronome" 120 4 swing >/dev/null 2>"$tmp/swing"
+python3 - "$tmp/swing" <<'EOF'
+import json, sys, time
+lines = [l for l in open(sys.argv[1]).read().splitlines() if l.strip()]
+ds = [json.loads(l) for l in lines]
+assert len(ds) >= 6, f"too few swing clicks: {len(ds)}"
+assert all(d["subs"] == 2 for d in ds), ds[:4]
+subs = [d["sub"] for d in ds]
+assert subs[:4] == [0, 1, 0, 1], subs[:6]
+EOF
+check "swing emits alternating 2-sub clicks" $?
 
 # --- 4. TERM to the pipeline leader tears down the group -------------------
 # Regression: bash defers trapped signals while blocked on a foreground

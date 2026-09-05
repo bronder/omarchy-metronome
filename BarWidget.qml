@@ -13,7 +13,7 @@ import qs.Commons
 // click-outside dismissal is disabled (PopupCard.triggerMode = "hover"),
 // and the bar icon / pin button tear it down. The overlay entry still
 // owns its own pinned corner window for external IPC (`omarchy-shell
-// bronder.metronome pin`); the in-popup pin does not go through it.
+// bronder.metronome.pin toggle`); the in-popup pin does not go through it.
 //
 // The popup and the overlay each run their own MetronomeBody, so both
 // active at once would mean two audio pipelines. The shell's openPanelIds
@@ -67,10 +67,14 @@ Panel {
     // own available-height math (screen − bar) bottoms out at its 120-unit
     // floor. Only trust it when it clears a sane minimum; otherwise cap the
     // card ourselves and let the Flickable handle the rest.
+    //
+    // The `opened` nudge: theme/Style resolves after load, so a height read
+    // at creation time under-measures (hero-only sliver) and never re-fires.
+    // Reading it again on open — user time, theme settled — measures truly.
     readonly property real cardHeightCap: panel.availableCardHeight > Style.space(300)
       ? panel.availableCardHeight
       : Style.space(560)
-    contentHeight: Math.round(Math.min(body.implicitHeight + panel.verticalContentInset, cardHeightCap))
+    contentHeight: Math.round(Math.min(body.implicitHeight + panel.verticalContentInset + (root.opened ? 0 : 0), cardHeightCap))
 
     Flickable {
       id: flick
@@ -81,6 +85,14 @@ Panel {
       boundsBehavior: Flickable.StopAtBounds
       flickableDirection: Flickable.VerticalFlick
       interactive: contentHeight > height
+
+      // Owns initial focus so Esc works immediately; Tab walks the body's
+      // focusable controls from here. Esc closes — unpinning first when
+      // pinned, since the pin button is the only other way out.
+      // (Deliberately not PanelKeyCatcher: it consumes Tab/arrows, which
+      // would break tabbing between the tempo controls.)
+      focus: true
+      Keys.onEscapePressed: root.pinned ? root.unpin() : root.close()
 
       ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
 
@@ -122,8 +134,10 @@ Panel {
 
   function pin() {
     if (root.pinned) return
+    if (root.overlaySummoned) return // never play under the overlay
     root.pinned = true
     if (!root.opened) root.open()
+    if (!root.opened) root.pinned = false // open() refused — don't go invisible-audio
   }
 
   function unpin() {

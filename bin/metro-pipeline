@@ -16,17 +16,33 @@ case "$sub" in
   *) echo "metro-pipeline: bad subdivision" >&2; exit 2 ;;
 esac
 
+command -v python3 >/dev/null 2>&1 || { echo '{"error":"missing python3"}' >&2; exit 127; }
+command -v pw-play >/dev/null 2>&1 || { echo '{"error":"missing pw-play"}' >&2; exit 127; }
+[ -x "${0%/*}/metronome" ] || { echo '{"error":"missing metronome generator"}' >&2; exit 127; }
+
+# Single-flight: a crashed/reloaded shell can leave a detached setsid group
+# clicking forever. Best-effort kill of stale siblings before starting.
+if command -v ps >/dev/null 2>&1 && command -v awk >/dev/null 2>&1; then
+  # shellcheck disable=SC2009
+  stale=$(ps -eo pid,args | awk -v me=$$ -v s="$0" '$1 != me && $2 == "bash" && $3 == s {print $1}')
+  if [ -n "$stale" ]; then
+    # shellcheck disable=SC2086
+    kill -TERM $stale 2>/dev/null || true
+    sleep 0.2
+  fi
+fi
+
 cleanup() {
-  trap - TERM INT EXIT
+  trap - TERM INT HUP EXIT
   kill -- -$$ 2>/dev/null || true
 }
-trap cleanup TERM INT EXIT
+trap cleanup TERM INT HUP EXIT
 
 # The pipeline must run in the background with a `wait`: bash defers
 # trapped signals while blocked on a foreground pipeline, and since the
 # metronome never exits, a TERM sent to this script would never run the
 # trap (and never tear the group down). `wait` is interruptible, so the
 # TERM trap fires immediately.
-exec "${0%/*}/metronome" "$bpm" "$beats" "$sub" \
+"${0%/*}/metronome" "$bpm" "$beats" "$sub" \
   | pw-play --raw --format=s16 --rate=44100 --channels=2 --latency=50ms - &
 wait
