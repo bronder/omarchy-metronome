@@ -5,7 +5,7 @@
   "version": "0.1.0",
   "author": "bronder",
   "license": "MIT",
-  "description": "Metronome with beat dots, tap tempo, subdivisions (straight, triplet, swing), and 1-12 beats per bar.",
+  "description": "Metronome with beat dots, tap tempo, subdivisions (straight, triplet, swing), 1-12 beats per bar, and an independent click-volume slider.",
   "kinds": [
     "overlay",
     "bar-widget"

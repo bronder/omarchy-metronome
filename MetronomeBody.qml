@@ -46,6 +46,9 @@ Item {
   property int beatsPerBar: 4
   property int currentBeat: 0
   property string subdivision: "1/4"
+  // Click level for the metronome's own stream (0–100). Applied through
+  // pw-play's --volume, so it never touches the system sink volume.
+  property int volume: 80
 
   // pw-play buffers ~audioLatencyMs before sound emerges (see the
   // --latency flag in bin/metro-pipeline); beat dots apply on a matching
@@ -119,7 +122,13 @@ Item {
     // onMetroActiveChanged → restartMetro(), so a single restart at the end
     // covers the whole summon instead of one per field.
     var tempoChanged = payload.bpm !== undefined || payload.beats !== undefined || payload.sub !== undefined
+    var volChanged = false
     var oldMetro = root.metroActive
+    if (payload.vol !== undefined) {
+      var newVol = clampInt(payload.vol, 0, 100, root.volume)
+      volChanged = newVol !== root.volume
+      root.volume = newVol
+    }
     if (payload.bpm !== undefined)
       root.bpm = clampInt(payload.bpm, 20, 300, root.bpm)
     if (payload.beats !== undefined)
@@ -130,7 +139,7 @@ Item {
     else if (payload.metro === true) root.metroActive = true
     // onMetroActiveChanged already restarted when metro flipped; restart
     // here only when metro stayed true but tempo changed.
-    if (root.metroActive && tempoChanged && root.metroActive === oldMetro) restartMetro()
+    if (root.metroActive && (tempoChanged || volChanged) && root.metroActive === oldMetro) restartMetro()
   }
 
   onActiveChanged: {
@@ -152,6 +161,15 @@ Item {
   // is fine — the next bar starts immediately.
   Timer {
     id: bpmHold
+    interval: 250
+    onTriggered: restartMetro()
+  }
+
+  // Volume rides the same settle path as tempo: sliding produces many
+  // values per second, and each applied value restarts the pipeline —
+  // so wait for the slider to rest before picking the final level.
+  Timer {
+    id: volumeHold
     interval: 250
     onTriggered: restartMetro()
   }
@@ -239,6 +257,13 @@ Item {
     setBpm(root.bpm + d)
   }
 
+  // Same settle path as setBpm: clamp, show immediately, restart the
+  // pipeline 250ms after the last move so sliding never thrashes pw-play.
+  function setVolume(v) {
+    root.volume = clampInt(v, 0, 100, root.volume)
+    volumeHold.restart()
+  }
+
   function setSubdivision(sub) {
     if (root.validSubdivisions.indexOf(sub) < 0) return
     if (root.subdivision === sub) return
@@ -261,7 +286,8 @@ Item {
     command: ["setsid", root.metroPipeline,
               String(clampInt(root.bpm, 20, 300, 100)),
               String(clampInt(root.beatsPerBar, 1, 12, 4)),
-              root.validSubdivisions.indexOf(root.subdivision) >= 0 ? root.subdivision : "1/4"]
+              root.validSubdivisions.indexOf(root.subdivision) >= 0 ? root.subdivision : "1/4",
+              String(clampInt(root.volume, 0, 100, 80))]
     stderr: SplitParser {
       onRead: function(line) {
         if (line.length > 256) return
@@ -737,6 +763,34 @@ Item {
       integer: true
       value: root.bpm
       onMoved: function(v) { root.setBpm(v) }
+    }
+
+    // Volume slider — click level for the metronome's own stream (system
+    // sink untouched). Settles through the shared setVolume debounce, so
+    // the pipeline picks up the final level 250ms after the last move.
+    Text {
+      width: parent.width
+      horizontalAlignment: Text.AlignHCenter
+      text: "CLICK VOLUME · " + root.volume + "%"
+      color: root.foreground
+      opacity: 0.55
+      font.family: root.fontFamily
+      font.pixelSize: Math.max(9, Style.font.body - 4)
+      font.bold: true
+      font.letterSpacing: 2
+      textFormat: Text.PlainText
+    }
+
+    PanelSlider {
+      id: volumeSlider
+      width: parent.width
+      height: implicitHeight + Style.spacing.controlGap
+      minimum: 0
+      maximum: 100
+      step: 1
+      integer: true
+      value: root.volume
+      onMoved: function(v) { root.setVolume(v) }
     }
 
     // Subdivisions: a compact 3-column grid of single-line chips — label

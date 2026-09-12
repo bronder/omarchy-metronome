@@ -3,11 +3,12 @@
 # process-group supervision contract as tuner-pipeline (started via setsid by
 # the QML layer; the trap kills the full tree on close/error/reload).
 #
-# Usage: metro-pipeline <bpm> <beats-per-bar> <subdivision>
+# Usage: metro-pipeline <bpm> <beats-per-bar> <subdivision> [volume 0-100]
 set -euo pipefail
 
-[ $# -eq 3 ] || { echo "usage: metro-pipeline <bpm> <beats> <subdivision>" >&2; exit 2; }
+[ $# -eq 3 ] || [ $# -eq 4 ] || { echo "usage: metro-pipeline <bpm> <beats> <subdivision> [volume]" >&2; exit 2; }
 bpm=$1 beats=$2 sub=$3
+vol=${4:-80}
 
 [[ "$bpm" =~ ^[0-9]{1,3}$ && "$bpm" -ge 20 && "$bpm" -le 300 ]] || { echo "metro-pipeline: bad bpm" >&2; exit 2; }
 [[ "$beats" =~ ^[0-9]{1,2}$ && "$beats" -ge 1 && "$beats" -le 12 ]] || { echo "metro-pipeline: bad beats" >&2; exit 2; }
@@ -15,6 +16,9 @@ case "$sub" in
   1/4|1/8|1/8t|1/16|1/16t|swing) ;;
   *) echo "metro-pipeline: bad subdivision" >&2; exit 2 ;;
 esac
+[[ "$vol" =~ ^[0-9]{1,3}$ && "$vol" -le 100 ]] || { echo "metro-pipeline: bad volume" >&2; exit 2; }
+# pw-play wants a linear 0-1.0 factor.
+vol_lin=$(awk -v v="$vol" 'BEGIN{printf "%.3f", v/100}')
 
 command -v python3 >/dev/null 2>&1 || { echo '{"error":"missing python3"}' >&2; exit 127; }
 command -v pw-play >/dev/null 2>&1 || { echo '{"error":"missing pw-play"}' >&2; exit 127; }
@@ -44,5 +48,5 @@ trap cleanup TERM INT HUP EXIT
 # trap (and never tear the group down). `wait` is interruptible, so the
 # TERM trap fires immediately.
 "${0%/*}/metronome" "$bpm" "$beats" "$sub" \
-  | pw-play --raw --format=s16 --rate=44100 --channels=2 --latency=50ms - &
+  | pw-play --raw --format=s16 --rate=44100 --channels=2 --latency=50ms --volume="$vol_lin" - &
 wait

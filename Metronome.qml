@@ -77,6 +77,7 @@ Item {
       payload.bpm = pinnedBody.bpm
       payload.beats = pinnedBody.beatsPerBar
       payload.sub = pinnedBody.subdivision
+      payload.vol = pinnedBody.volume
       payload.metro = pinnedBody.metroActive
       root.unpin()
     }
@@ -144,6 +145,7 @@ Item {
       if (p.bpm === undefined) p.bpm = s.bpm
       if (p.beats === undefined) p.beats = s.beats
       if (p.sub === undefined) p.sub = s.sub
+      if (p.vol === undefined) p.vol = s.vol
       if (p.metro === undefined) p.metro = s.metro
       root.close()
     }
@@ -151,6 +153,7 @@ Item {
     if (p.beats !== undefined) pinnedBody.beatsPerBar = clampGuard(p.beats, 1, 12, pinnedBody.beatsPerBar)
     if (p.sub !== undefined && pinnedBody.validSubdivisions.indexOf(p.sub) >= 0)
       pinnedBody.subdivision = p.sub
+    if (p.vol !== undefined) pinnedBody.volume = clampGuard(p.vol, 0, 100, pinnedBody.volume)
     pinnedBody.metroActive = p.metro === true
     // Anchor now: the pinned window keeps its own screen from here on.
     root.pinnedScreen = root.targetScreen ? root.targetScreen : root.firstScreen()
@@ -307,7 +310,7 @@ Item {
       // corner window (see pin()). liveBodyImplicit feeds cardHeight —
       // the card sizes from the live content, not the inert copy.
       function liveState() {
-        return { bpm: body.bpm, beats: body.beatsPerBar, sub: body.subdivision, metro: body.metroActive }
+        return { bpm: body.bpm, beats: body.beatsPerBar, sub: body.subdivision, vol: body.volume, metro: body.metroActive }
       }
 
       function liveBodyImplicit() {

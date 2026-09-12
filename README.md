@@ -2,12 +2,13 @@
 
 An [Omarchy](https://omarchy.org/) shell plugin: a metronome.
 
-![Metronome preview](preview.png)
+![Metronome popup with the tempo and click-volume sliders](preview.png)
 
 ▶ starts it, dots show the beat (green accent on the downbeat), steppers and
 a slider set the tempo (20–300 bpm), a TAP button taps it in, tiles pick the
-subdivision (1/4, 1/8, 1/8t, swing, 1/16, 1/16t), and a stepper row sets the
-beats per bar (1–12, shown as N/4).
+subdivision (1/4, 1/8, 1/8t, swing, 1/16, 1/16t), a stepper row sets the
+beats per bar (1–12, shown as N/4), and a slider sets the click volume
+(0–100%, applied to the metronome stream only).
 
 ## Layout
 
@@ -31,11 +32,13 @@ tests/run.sh        # arg-validation, beat-JSON schema, and pipe-teardown tests
 
       {"beat": 1, "beats": 4, "sub": 0, "subs": 2}
 
-- `bin/metro-pipeline` re-validates its arguments and pipes the generator
-  into `pw-play` (PipeWire). The QML layer starts it under `setsid`, so the
-  script is a process-group leader whose TERM trap tears down the whole
-  tree on close, error, or reload. The pipeline runs only while the panel
-  is open and ▶ is on.
+- `bin/metro-pipeline` re-validates its arguments (including the optional
+  click volume, 0–100, default 80) and pipes the generator into `pw-play`
+  (PipeWire) with `--volume`, so the level applies to the metronome stream
+  only. The QML layer starts it under `setsid`, so the script is a
+  process-group leader whose TERM trap tears down the whole tree on close,
+  error, or reload. The pipeline runs only while the panel is open and ▶
+  is on.
 - The overlay appears on the monitor Hyprland has focused (queried at open
   time via `hyprctl monitors`); pin it with `{"screen":"DP-1"}`.
 - Every value that reaches a process argument is clamped/re-validated on
@@ -44,12 +47,13 @@ tests/run.sh        # arg-validation, beat-JSON schema, and pipe-teardown tests
 ## Payload form
 
 ```bash
-omarchy-shell shell summon bronder.metronome '{"metro":true,"bpm":140,"beats":3,"sub":"swing","screen":"DP-1","pin":true}'
+omarchy-shell shell summon bronder.metronome '{"metro":true,"bpm":140,"beats":3,"sub":"swing","vol":80,"screen":"DP-1","pin":true}'
 ```
 
-All keys optional. `screen` picks the output (`hyprctl` focused monitor by
-default); `pin:true` opens the always-on-top corner window instead of the
-fullscreen overlay. Pin verbs (the IPC target is `bronder.metronome.pin`):
+All keys optional. `vol` is the click volume, 0–100. `screen` picks the
+output (`hyprctl` focused monitor by default); `pin:true` opens the
+always-on-top corner window instead of the fullscreen overlay. Pin verbs
+(the IPC target is `bronder.metronome.pin`):
 
 ```bash
 omarchy-shell bronder.metronome.pin toggle   # pin / unpin / toggle
@@ -73,7 +77,7 @@ Dependencies: `python3`, `pw-play` (PipeWire), `setsid` (util-linux), `jq`
 ## Tests
 
 ```bash
-tests/run.sh   # arg validation, beat-JSON schema, BrokenPipe teardown
+tests/run.sh   # arg validation (incl. volume), beat-JSON schema, BrokenPipe teardown
 ```
 
 ## Development
@@ -93,5 +97,9 @@ to take.
 ## Test the generator by hand
 
 ```bash
+# Raw generator into pw-play (full volume)
 bin/metronome 120 4 1/8 2>/dev/null | pw-play --raw --format=s16 --rate=44100 --channels=2 -
+
+# Full pipeline with the click volume at 50%
+bin/metro-pipeline 120 4 1/8 50
 ```

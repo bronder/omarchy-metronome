@@ -56,6 +56,18 @@ check "metro-pipeline rejects wrong arity" $([ $? -eq 2 ]; echo $?)
 check "metro-pipeline rejects non-numeric bpm" $([ $? -eq 2 ]; echo $?)
 "$bin/metro-pipeline" 120 4 1/3 >/dev/null 2>&1
 check "metro-pipeline rejects unknown subdivision" $([ $? -eq 2 ]; echo $?)
+"$bin/metro-pipeline" 120 4 1/4 abc >/dev/null 2>&1
+check "metro-pipeline rejects non-numeric volume" $([ $? -eq 2 ]; echo $?)
+"$bin/metro-pipeline" 120 4 1/4 101 >/dev/null 2>&1
+check "metro-pipeline rejects out-of-range volume" $([ $? -eq 2 ]; echo $?)
+"$bin/metro-pipeline" 120 4 1/4 50 9 >/dev/null 2>&1
+check "metro-pipeline rejects extra args" $([ $? -eq 2 ]; echo $?)
+
+# A valid volume arg must let the pipeline run (124 = timeout killed a
+# still-playing pipeline, which is success here).
+rc=0
+timeout 1 "$bin/metro-pipeline" 120 4 1/4 30 >/dev/null 2>&1 || rc=$?
+check "metro-pipeline accepts volume arg and keeps playing" $([ $rc -eq 124 ]; echo $?)
 
 # --- 1b. bar wrap at the edges ------------------------------------------
 # beats=1 always reports beat 1; beats=12 cycles 1..12.
