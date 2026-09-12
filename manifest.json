@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "bronder.metronome",
   "name": "Metronome",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": "bronder",
   "license": "MIT",
   "description": "Metronome with beat dots, tap tempo, subdivisions (straight, triplet, swing), 1-12 beats per bar, and an independent click-volume slider.",

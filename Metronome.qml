@@ -129,7 +129,10 @@ Item {
 
     function pin(): void { root.pin() }
     function unpin(): void { root.unpin() }
-    function toggle(): void { root.pinned ? root.unpin() : root.pin() }
+    function toggle(): void {
+      if (root.pinned) root.unpin()
+      else root.pin()
+    }
   }
 
   function pin() {
